@@ -1,3 +1,5 @@
+This is a repackage of the JQuery plugin bootstrap-markdown for Meteor.
+
 ## Bootstrap Markdown
 
 Markdown editing meet Bootstrap.
