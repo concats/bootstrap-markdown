@@ -13,7 +13,6 @@ Package.onUse(function(api) {
         'locale/bootstrap-markdown.es.js',
         'locale/bootstrap-markdown.fr.js',
         'locale/bootstrap-markdown.ja.js',
-        'locale/bootstrap-markdown.kr.js',
         'locale/bootstrap-markdown.nb.js',
         'locale/bootstrap-markdown.nl.js',
         'locale/bootstrap-markdown.pl.js',
