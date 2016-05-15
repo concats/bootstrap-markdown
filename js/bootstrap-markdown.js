@@ -1,8 +1,8 @@
 /* ===================================================
- * bootstrap-markdown.js v2.8.0
+ * bootstrap-markdown.js v2.10.0
  * http://github.com/toopay/bootstrap-markdown
  * ===================================================
- * Copyright 2013-2014 Taufan Aditya
+ * Copyright 2013-2016 Taufan Aditya
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,18 @@
  * limitations under the License.
  * ========================================================== */
 
-!function ($) {
-
+(function(factory){
+    if (typeof define === "function" && define.amd) {
+        //RequireJS
+        define(["jquery"], factory);
+    } else if (typeof exports === 'object') {
+        //Backbone.js
+        factory(require('jquery'));
+    } else {
+        //Jquery plugin
+        factory(jQuery);
+    }
+}(function($){
   "use strict"; // jshint ;_;
 
   /* MARKDOWN CLASS DEFINITION
@@ -151,14 +161,19 @@
         this.$textarea.css('resize',this.$options.resize);
       }
 
-      this.$textarea
-        .on('focus',    $.proxy(this.focus, this))
-        .on('keypress', $.proxy(this.keypress, this))
-        .on('keyup',    $.proxy(this.keyup, this))
-        .on('change',   $.proxy(this.change, this));
+      this.$textarea.on({
+          'focus' : $.proxy(this.focus, this),
+          'keyup' : $.proxy(this.keyup, this),
+          'change' : $.proxy(this.change, this),
+          'select' : $.proxy(this.select, this)
+      });
 
       if (this.eventSupported('keydown')) {
         this.$textarea.on('keydown', $.proxy(this.keydown, this));
+      }
+
+      if (this.eventSupported('keypress')) {
+        this.$textarea.on('keypress', $.proxy(this.keypress, this))
       }
 
       // Re-attach markdown data
@@ -218,6 +233,9 @@
     } else {
       $editor.removeClass('md-fullscreen-mode');
       $('body').removeClass('md-nooverflow');
+      this.$options.onFullscreenExit(this);
+
+      if (this.$isPreview == true) this.hidePreview().showPreview()
     }
 
     this.$isFullscreen = mode;
@@ -252,7 +270,24 @@
         // Merge the main & additional button groups together
         var allBtnGroups = [];
         if (options.buttons.length > 0) allBtnGroups = allBtnGroups.concat(options.buttons[0]);
-        if (options.additionalButtons.length > 0) allBtnGroups = allBtnGroups.concat(options.additionalButtons[0]);
+        if (options.additionalButtons.length > 0) {
+          // iterate the additional button groups
+          $.each(options.additionalButtons[0], function(idx, buttonGroup){
+            
+            // see if the group name of the addional group matches an existing group
+            var matchingGroups = $.grep(allBtnGroups, function(allButtonGroup, allIdx){
+              return allButtonGroup.name === buttonGroup.name;
+            });
+
+            // if it matches add the addional buttons to that group, if not just add it to the all buttons group
+            if(matchingGroups.length > 0) {
+              matchingGroups[0].data = matchingGroups[0].data.concat(buttonGroup.data);
+            } else {              
+              allBtnGroups.push(options.additionalButtons[0][idx]);
+            }
+
+          });
+        } 
 
         // Reduce and/or reorder the button groups
         if (options.reorderButtonGroups.length > 0) {
@@ -415,11 +450,10 @@
       }
 
       if (options.fullscreen.enable && options.fullscreen !== false) {
-        this.$editor.append('\
-          <div class="md-fullscreen-controls">\
-            <a href="#" class="exit-fullscreen" title="Exit fullscreen"><span class="'+this.__getIcon(options.fullscreen.icons.fullscreenOff)+'"></span></a>\
-          </div>');
-
+        this.$editor.append('<div class="md-fullscreen-controls">'
+                        + '<a href="#" class="exit-fullscreen" title="Exit fullscreen"><span class="' + this.__getIcon(options.fullscreen.icons.fullscreenOff) + '">'
+                        + '</span></a>'
+                        + '</div>');
         this.$editor.on('click', '.exit-fullscreen', function(e) {
           e.preventDefault();
           instance.setFullscreen(false);
@@ -431,6 +465,29 @@
 
       // disable disabled buttons from options
       this.disableButtons(options.disabledButtons);
+
+      // enable dropZone if available and configured
+      if (options.dropZoneOptions) {
+        if (this.$editor.dropzone) {
+          options.dropZoneOptions.init = function() {
+            var caretPos = 0;
+            this.on('drop', function(e) {
+              caretPos = textarea.prop('selectionStart');
+            });
+            this.on('success', function(file, path) {
+              var text = textarea.val();
+              textarea.val(text.substring(0, caretPos) + '\n![description](' + path + ')\n' + text.substring(caretPos) );
+            });
+            this.on('error', function(file, error, xhr) {
+              console.log('Error:', error);
+            });
+          }
+          this.$textarea.addClass('dropzone');
+          this.$editor.dropzone(options.dropZoneOptions);
+        } else {
+          console.log('dropZoneOptions was configured, but DropZone was not detected.');
+        }
+      }
 
       // Trigger the onShow hook
       options.onShow(this);
@@ -444,7 +501,9 @@
       // parse with supported markdown parser
       var val = val || this.$textarea.val();
 
-      if (typeof markdown == 'object') {
+      if (this.$options.parser) {
+        content = this.$options.parser(val);
+      } else if (typeof markdown == 'object') {
         content = markdown.toHTML(val);
       } else if (typeof marked == 'function') {
         content = marked(val);
@@ -463,6 +522,12 @@
           content,
           callbackContent;
 
+      if (this.$isPreview == true) {
+        // Avoid sequenced element creation on missused scenario
+        // @see https://github.com/toopay/bootstrap-markdown/issues/170
+        return this;
+      }
+      
       // Give flag that tell the editor enter preview mode
       this.$isPreview = true;
       // Disable all buttons
@@ -660,16 +725,11 @@
       return;
     }
 
-  , __parseButtonNameParam: function(nameParam) {
-      var buttons = [];
+  , __parseButtonNameParam: function (names) {
+      return typeof names == 'string' ?
+                      names.split(' ') :
+                      names;
 
-      if (typeof nameParam == 'string') {
-        buttons = nameParam.split(',')
-      } else {
-        buttons = nameParam;
-      }
-
-      return buttons;
     }
 
   , enableButtons: function(name) {
@@ -795,7 +855,10 @@
       this.$options.onChange(this);
       return this;
     }
-
+  , select: function (e) {
+      this.$options.onSelect(this);
+      return this;
+    }
   , focus: function (e) {
       var options = this.$options,
           isHideable = options.hideable,
@@ -840,7 +903,7 @@
             // Build the original element
             var oldElement = $('<'+editable.type+'/>'),
                 content = this.getContent(),
-                currentContent = (typeof markdown == 'object') ? markdown.toHTML(content) : content;
+                currentContent = this.parseContent(content);
 
             $(editable.attrKeys).each(function(k,v) {
               oldElement.attr(editable.attrKeys[k],editable.attrValues[k]);
@@ -884,13 +947,15 @@
     /* Editor Properties */
     autofocus: false,
     hideable: false,
-    savable:false,
+    savable: false,
     width: 'inherit',
     height: 'inherit',
     resize: 'none',
     iconlibrary: 'glyph',
     language: 'en',
     initialstate: 'editor',
+    parser: null,
+    dropZoneOptions: null,
 
     /* Buttons Properties */
     buttons: [
@@ -900,7 +965,7 @@
           name: 'cmdBold',
           hotkey: 'Ctrl+B',
           title: 'Bold',
-          icon: { glyph: 'glyphicon glyphicon-bold', fa: 'fa fa-bold', 'fa-3': 'icon-bold' },
+          icon: { glyph: 'glyphicon glyphicon-bold', fa: 'fa fa-bold', 'fa-3': 'icon-bold', octicons: 'octicon octicon-bold' },
           callback: function(e){
             // Give/remove ** surround the selection
             var chunk, cursor, selected = e.getSelection(), content = e.getContent();
@@ -930,7 +995,7 @@
           name: 'cmdItalic',
           title: 'Italic',
           hotkey: 'Ctrl+I',
-          icon: { glyph: 'glyphicon glyphicon-italic', fa: 'fa fa-italic', 'fa-3': 'icon-italic' },
+          icon: { glyph: 'glyphicon glyphicon-italic', fa: 'fa fa-italic', 'fa-3': 'icon-italic', octicons: 'octicon octicon-italic' },
           callback: function(e){
             // Give/remove * surround the selection
             var chunk, cursor, selected = e.getSelection(), content = e.getContent();
@@ -960,7 +1025,7 @@
           name: 'cmdHeading',
           title: 'Heading',
           hotkey: 'Ctrl+H',
-          icon: { glyph: 'glyphicon glyphicon-header', fa: 'fa fa-header', 'fa-3': 'icon-font' },
+          icon: { glyph: 'glyphicon glyphicon-header', fa: 'fa fa-header', 'fa-3': 'icon-font', octicons: 'octicon octicon-text-size' },
           callback: function(e){
             // Append/remove ### surround the selection
             var chunk, cursor, selected = e.getSelection(), content = e.getContent(), pointer, prevChar;
@@ -997,7 +1062,7 @@
           name: 'cmdUrl',
           title: 'URL/Link',
           hotkey: 'Ctrl+L',
-          icon: { glyph: 'glyphicon glyphicon-link', fa: 'fa fa-link', 'fa-3': 'icon-link' },
+          icon: { glyph: 'glyphicon glyphicon-link', fa: 'fa fa-link', 'fa-3': 'icon-link', octicons: 'octicon octicon-link' },
           callback: function(e){
             // Give [] surround the selection and prepend the link
             var chunk, cursor, selected = e.getSelection(), content = e.getContent(), link;
@@ -1011,7 +1076,8 @@
 
             link = prompt(e.__localize('Insert Hyperlink'),'http://');
 
-            if (link !== null && link !== '' && link !== 'http://' && link.substr(0,4) === 'http') {
+            var urlRegex = new RegExp('^((http|https)://|(mailto:)|(//))[a-z0-9]', 'i');
+            if (link !== null && link !== '' && link !== 'http://' && urlRegex.test(link)) {
               var sanitizedLink = $('<div>'+link+'</div>').text();
 
               // transform selection and set the cursor into chunked text
@@ -1026,7 +1092,7 @@
           name: 'cmdImage',
           title: 'Image',
           hotkey: 'Ctrl+G',
-          icon: { glyph: 'glyphicon glyphicon-picture', fa: 'fa fa-picture-o', 'fa-3': 'icon-picture' },
+          icon: { glyph: 'glyphicon glyphicon-picture', fa: 'fa fa-picture-o', 'fa-3': 'icon-picture', octicons: 'octicon octicon-file-media' },
           callback: function(e){
             // Give ![] surround the selection and prepend the image link
             var chunk, cursor, selected = e.getSelection(), content = e.getContent(), link;
@@ -1040,7 +1106,8 @@
 
             link = prompt(e.__localize('Insert Image Hyperlink'),'http://');
 
-            if (link !== null && link !== '' && link !== 'http://' && link.substr(0,4) === 'http') {
+            var urlRegex = new RegExp('^((http|https)://|(//))[a-z0-9]', 'i');
+            if (link !== null && link !== '' && link !== 'http://' && urlRegex.test(link)) {
               var sanitizedLink = $('<div>'+link+'</div>').text();
 
               // transform selection and set the cursor into chunked text
@@ -1061,7 +1128,7 @@
           name: 'cmdList',
           hotkey: 'Ctrl+U',
           title: 'Unordered List',
-          icon: { glyph: 'glyphicon glyphicon-list', fa: 'fa fa-list', 'fa-3': 'icon-list-ul' },
+          icon: { glyph: 'glyphicon glyphicon-list', fa: 'fa fa-list', 'fa-3': 'icon-list-ul', octicons: 'octicon octicon-list-unordered' },
           callback: function(e){
             // Prepend/Give - surround the selection
             var chunk, cursor, selected = e.getSelection(), content = e.getContent();
@@ -1107,7 +1174,7 @@
           name: 'cmdListO',
           hotkey: 'Ctrl+O',
           title: 'Ordered List',
-          icon: { glyph: 'glyphicon glyphicon-th-list', fa: 'fa fa-list-ol', 'fa-3': 'icon-list-ol' },
+          icon: { glyph: 'glyphicon glyphicon-th-list', fa: 'fa fa-list-ol', 'fa-3': 'icon-list-ol', octicons: 'octicon octicon-list-ordered' },
           callback: function(e) {
 
             // Prepend/Give - surround the selection
@@ -1153,7 +1220,7 @@
           name: 'cmdCode',
           hotkey: 'Ctrl+K',
           title: 'Code',
-          icon: { glyph: 'glyphicon glyphicon-asterisk', fa: 'fa fa-code', 'fa-3': 'icon-code' },
+          icon: { glyph: 'glyphicon glyphicon-asterisk', fa: 'fa fa-code', 'fa-3': 'icon-code', octicons: 'octicon octicon-code' },
           callback: function(e) {
             // Give/remove ** surround the selection
             var chunk, cursor, selected = e.getSelection(), content = e.getContent();
@@ -1192,7 +1259,7 @@
           name: 'cmdQuote',
           hotkey: 'Ctrl+Q',
           title: 'Quote',
-          icon: { glyph: 'glyphicon glyphicon-comment', fa: 'fa fa-quote-left', 'fa-3': 'icon-quote-left' },
+          icon: { glyph: 'glyphicon glyphicon-comment', fa: 'fa fa-quote-left', 'fa-3': 'icon-quote-left', octicons: 'octicon octicon-quote' },
           callback: function(e) {
             // Prepend/Give - surround the selection
             var chunk, cursor, selected = e.getSelection(), content = e.getContent();
@@ -1244,7 +1311,7 @@
           title: 'Preview',
           btnText: 'Preview',
           btnClass: 'btn btn-primary btn-sm',
-          icon: { glyph: 'glyphicon glyphicon-search', fa: 'fa fa-search', 'fa-3': 'icon-search' },
+          icon: { glyph: 'glyphicon glyphicon-search', fa: 'fa fa-search', 'fa-3': 'icon-search', octicons: 'octicon octicon-search' },
           callback: function(e){
             // Check the preview mode and toggle based on this flag
             var isPreview = e.$isPreview,content;
@@ -1270,12 +1337,14 @@
         fullscreenOn: {
           fa: 'fa fa-expand',
           glyph: 'glyphicon glyphicon-fullscreen',
-          'fa-3': 'icon-resize-full'
+          'fa-3': 'icon-resize-full',
+          octicons: 'octicon octicon-link-external'
         },
         fullscreenOff: {
           fa: 'fa fa-compress',
           glyph: 'glyphicon glyphicon-fullscreen',
-          'fa-3': 'icon-resize-small'
+          'fa-3': 'icon-resize-small',
+          octicons: 'octicon octicon-browser'
         }
       }
     },
@@ -1287,7 +1356,9 @@
     onBlur: function (e) {},
     onFocus: function (e) {},
     onChange: function(e) {},
-    onFullscreen: function(e) {}
+    onFullscreen: function(e) {},
+    onFullscreenExit: function(e) {},
+    onSelect: function (e) {}
   };
 
   $.fn.markdown.Constructor = Markdown;
@@ -1344,4 +1415,4 @@
       })
     });
 
-}(window.jQuery);
+}));
